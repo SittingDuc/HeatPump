@@ -83,11 +83,15 @@ HeatPump::HeatPump() {
 // Public Methods //////////////////////////////////////////////////////////////
 
 bool HeatPump::connect(HardwareSerial *serial) {
+	return connect(serial,true);
+}
+
+bool HeatPump::connect(HardwareSerial *serial, bool retry) {
   if(serial != NULL) {
     _HardSerial = serial;
   }
   connected = false;
-  _HardSerial->begin(2400, SERIAL_8E1);
+  _HardSerial->begin(bitrate, SERIAL_8E1);
   if(onConnectCallback) {
     onConnectCallback();
   }
@@ -101,6 +105,10 @@ bool HeatPump::connect(HardwareSerial *serial) {
   //for(int count = 0; count < 2; count++) {
   writePacket(packet, CONNECT_LEN);
   int packetType = readPacket();
+  if(packetType != RCVD_PKT_CONNECT_SUCCESS && retry){
+	  bitrate = (bitrate == 2400 ? 9600 : 2400);
+	  return connect(serial, false);
+  }
   return packetType == RCVD_PKT_CONNECT_SUCCESS;
   //}
 }
@@ -115,8 +123,13 @@ bool HeatPump::update() {
   int packetType = readPacket();
   
   if(packetType == RCVD_PKT_UPDATE_SUCCESS) {
-    // call sync() to get the latest settings from the heatpump, which should now have the updated settings
-    sync(RQST_PKT_SETTINGS);
+    // call sync() to get the latest settings from the heatpump for autoUpdate, which should now have the updated settings
+    if(autoUpdate) { //this sync will happen regardless, but autoUpdate needs it sooner than later.
+	    while(!canSend(true)) { 
+		    delay(10); 
+	    } 
+	    sync(RQST_PKT_SETTINGS); 
+    }
 
     return true;
   } else {
@@ -173,20 +186,30 @@ void HeatPump::setPowerSetting(bool setting) {
   wantedSettings.power = lookupByteMapIndex(POWER_MAP, 2, POWER_MAP[setting ? 1 : 0]) > -1 ? POWER_MAP[setting ? 1 : 0] : POWER_MAP[0];
 }
 
-String HeatPump::getPowerSetting() {
+const char* HeatPump::getPowerSetting() {
   return currentSettings.power;
 }
 
-void HeatPump::setPowerSetting(String setting) {
-  wantedSettings.power = lookupByteMapIndex(POWER_MAP, 2, setting) > -1 ? setting : POWER_MAP[0];
+void HeatPump::setPowerSetting(const char* setting) {
+  int index = lookupByteMapIndex(POWER_MAP, 2, setting);
+  if (index > -1) {
+    wantedSettings.power = POWER_MAP[index];
+  } else {
+    wantedSettings.power = POWER_MAP[0];
+  }
 }
 
-String HeatPump::getModeSetting() {
+const char* HeatPump::getModeSetting() {
   return currentSettings.mode;
 }
 
-void HeatPump::setModeSetting(String setting) {
-  wantedSettings.mode = lookupByteMapIndex(MODE_MAP, 5, setting) > -1 ? setting : MODE_MAP[0];
+void HeatPump::setModeSetting(const char* setting) {
+  int index = lookupByteMapIndex(MODE_MAP, 5, setting);
+  if (index > -1) {
+    wantedSettings.mode = MODE_MAP[index];
+  } else {
+    wantedSettings.mode = MODE_MAP[0];
+  }
 }
 
 float HeatPump::getTemperature() {
@@ -233,28 +256,44 @@ void HeatPump::setRemoteTemperature(float setting) {
   writePacket(packet, PACKET_LEN);
 }
 
-String HeatPump::getFanSpeed() {
+const char* HeatPump::getFanSpeed() {
   return currentSettings.fan;
 }
 
-void HeatPump::setFanSpeed(String setting) {
-  wantedSettings.fan = lookupByteMapIndex(FAN_MAP, 6, setting) > -1 ? setting : FAN_MAP[0];
+
+void HeatPump::setFanSpeed(const char* setting) {
+  int index = lookupByteMapIndex(FAN_MAP, 6, setting);
+  if (index > -1) {
+    wantedSettings.fan = FAN_MAP[index];
+  } else {
+    wantedSettings.fan = FAN_MAP[0];
+  }
 }
 
-String HeatPump::getVaneSetting() {
+const char* HeatPump::getVaneSetting() {
   return currentSettings.vane;
 }
 
-void HeatPump::setVaneSetting(String setting) {
-  wantedSettings.vane = lookupByteMapIndex(VANE_MAP, 7, setting) > -1 ? setting : VANE_MAP[0];
+void HeatPump::setVaneSetting(const char* setting) {
+  int index = lookupByteMapIndex(VANE_MAP, 7, setting);
+  if (index > -1) {
+    wantedSettings.vane = VANE_MAP[index];
+  } else {
+    wantedSettings.vane = VANE_MAP[0];
+  }
 }
 
-String HeatPump::getWideVaneSetting() {
+const char* HeatPump::getWideVaneSetting() {
   return currentSettings.wideVane;
 }
 
-void HeatPump::setWideVaneSetting(String setting) {
-  wantedSettings.wideVane = lookupByteMapIndex(WIDEVANE_MAP, 7, setting) > -1 ? setting : WIDEVANE_MAP[0];
+void HeatPump::setWideVaneSetting(const char* setting) {
+  int index = lookupByteMapIndex(WIDEVANE_MAP, 7, setting);
+  if (index > -1) {
+    wantedSettings.wideVane = WIDEVANE_MAP[index];
+  } else {
+    wantedSettings.wideVane = WIDEVANE_MAP[0];
+  }
 }
 
 bool HeatPump::getIseeBool() { //no setter yet
@@ -335,9 +374,9 @@ int HeatPump::lookupByteMapIndex(const int valuesMap[], int len, int lookupValue
   return -1;
 }
 
-int HeatPump::lookupByteMapIndex(const String valuesMap[], int len, String lookupValue) {
+int HeatPump::lookupByteMapIndex(const char* valuesMap[], int len, const char* lookupValue) {
   for (int i = 0; i < len; i++) {
-    if (valuesMap[i] == lookupValue) {
+    if (strcmp(valuesMap[i], lookupValue) == 0) {
       return i;
     }
   }
@@ -345,7 +384,7 @@ int HeatPump::lookupByteMapIndex(const String valuesMap[], int len, String looku
 }
 
 
-String HeatPump::lookupByteMapValue(const String valuesMap[], const byte byteMap[], int len, byte byteValue) {
+const char* HeatPump::lookupByteMapValue(const char* valuesMap[], const byte byteMap[], int len, byte byteValue) {
   for (int i = 0; i < len; i++) {
     if (byteMap[i] == byteValue) {
       return valuesMap[i];
@@ -428,8 +467,12 @@ void HeatPump::createInfoPacket(byte *packet, byte packetType) {
     packet[5] = INFOMODE[packetType];
   } else {
     // request current infoMode, and increment for the next request
-    packet[5] = INFOMODE[infoMode]; 
-    infoMode = (infoMode == (INFOMODE_LEN - 1)) ? 0 : infoMode += 1;
+    packet[5] = INFOMODE[infoMode];
+    if(infoMode == (INFOMODE_LEN - 1)) {
+      infoMode = 0;
+    } else {
+      infoMode++;
+    }
   }
 
   // pad the packet out
@@ -558,7 +601,6 @@ int HeatPump::readPacket() {
             case 0x03: { //Room temperature reading
               heatpumpStatus receivedStatus;
 
-              float receivedRoomTemp;
               if(data[6] != 0x00) {
                 int temp = data[6];
                 temp -= 128;
