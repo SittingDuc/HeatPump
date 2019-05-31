@@ -51,7 +51,7 @@ typedef uint8_t byte;
 struct heatpumpSettings {
   const char* power;
   const char* mode;
-  float temperature;
+  float temperature; // target temperature
   const char* fan;
   const char* vane; //vertical vane, up/down
   const char* wideVane; //horizontal vane, left/right
@@ -74,7 +74,7 @@ bool operator==(const heatpumpTimers& lhs, const heatpumpTimers& rhs);
 bool operator!=(const heatpumpTimers& lhs, const heatpumpTimers& rhs);
 
 struct heatpumpStatus {
-  float roomTemperature;
+  float roomTemperature; // obsserved temperature
   bool operating; // if true, the heatpump is operating to reach the desired temperature
   heatpumpTimers timers;
   int compressorFrequency;
@@ -186,8 +186,8 @@ class HeatPump
 
     // general
     HeatPump();
-    bool connect(HardwareSerial *serial);
-    bool connect(HardwareSerial *serial, bool retry);
+    bool connect(HardwareSerial *vserial);
+    bool connect(HardwareSerial *vserial, bool retry);
     bool update();
     void sync(byte packetType = PACKET_TYPE_DEFAULT);
     void enableExternalUpdate();

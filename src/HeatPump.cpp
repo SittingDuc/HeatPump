@@ -78,26 +78,30 @@ HeatPump::HeatPump() {
   tempMode = false;
   externalUpdate = false;
   currentStatus = {0, false, {TIMER_MODE_MAP[0], 0, 0, 0, 0}}; // initialise to all off, then it will update shortly after connect
+  currentSettings = {POWER_MAP[0], MODE_MAP[4], 0.0, FAN_MAP[0], VANE_MAP[0], WIDEVANE_MAP[2], false, false};
+  wantedSettings=currentSettings;
 }
 
 // Public Methods //////////////////////////////////////////////////////////////
 
-bool HeatPump::connect(HardwareSerial *serial) {
-	return connect(serial,true);
+bool HeatPump::connect(HardwareSerial *vserial) {
+	return connect(vserial,true);
 }
 
-bool HeatPump::connect(HardwareSerial *serial, bool retry) {
-  if(serial != NULL) {
-    _HardSerial = serial;
+bool HeatPump::connect(HardwareSerial *vserial, bool retry) {
+  if(vserial != NULL) {
+    _HardSerial = vserial;
   }
   connected = false;
-  _HardSerial->begin(bitrate, SERIAL_8E1);
+  if( _HardSerial ) _HardSerial->begin(bitrate, SERIAL_8E1);
   if(onConnectCallback) {
     onConnectCallback();
   }
   
   // settle before we start sending packets
-  delay(2000);
+  if(vserial != NULL) {
+    delay(2000);
+  }
 
   // send the CONNECT packet twice - need to copy the CONNECT packet locally
   byte packet[CONNECT_LEN];
@@ -107,13 +111,14 @@ bool HeatPump::connect(HardwareSerial *serial, bool retry) {
   int packetType = readPacket();
   if(packetType != RCVD_PKT_CONNECT_SUCCESS && retry){
 	  bitrate = (bitrate == 2400 ? 9600 : 2400);
-	  return connect(serial, false);
+	  return connect(vserial, false);
   }
   return packetType == RCVD_PKT_CONNECT_SUCCESS;
   //}
 }
 
 bool HeatPump::update() {
+  if( ! _HardSerial ) { return false; }
   while(!canSend(false)) { delay(10); }
 
   byte packet[PACKET_LEN] = {};
@@ -252,6 +257,7 @@ void HeatPump::setRemoteTemperature(float setting) {
   // add the checksum
   byte chkSum = checkSum(packet, 21);
   packet[21] = chkSum;
+  if( !_HardSerial ) { return; }
   while(!canSend(false)) { delay(10); }
   writePacket(packet, PACKET_LEN);
 }
@@ -344,6 +350,7 @@ void HeatPump::setRoomTempChangedCallback(ROOM_TEMP_CHANGED_CALLBACK_SIGNATURE) 
 
 //#### WARNING, THE FOLLOWING METHOD CAN F--K YOUR HP UP, USE WISELY ####
 void HeatPump::sendCustomPacket(byte data[], int packetLength) {
+  if( ! _HardSerial ) { return; }
   while(!canSend(false)) { delay(10); }
 
   packetLength += 2; // +2 for first header byte and checksum
@@ -403,6 +410,7 @@ int HeatPump::lookupByteMapValue(const int valuesMap[], const byte byteMap[], in
 }
 
 bool HeatPump::canSend(bool isInfo) {
+  if( ! _HardSerial ) { return false; }
   return (millis() - (isInfo ? PACKET_INFO_INTERVAL_MS : PACKET_SENT_INTERVAL_MS)) > lastSend;
 }  
 
@@ -486,14 +494,16 @@ void HeatPump::createInfoPacket(byte *packet, byte packetType) {
 }
 
 void HeatPump::writePacket(byte *packet, int length) {
-  for (int i = 0; i < length; i++) {
-     _HardSerial->write((uint8_t)packet[i]);
+  if( _HardSerial ) {
+    for (int i = 0; i < length; i++) {
+      _HardSerial->write((uint8_t)packet[i]);
+    }
   }
 
   if(packetCallback) {
     packetCallback(packet, length, (char*)"packetSent");
   }
-  delay(1000);
+  if( _HardSerial ) { delay(1000); }
   lastSend = millis();
 }
 
@@ -505,7 +515,7 @@ int HeatPump::readPacket() {
   byte checksum = 0;
   byte dataLength = 0;
   
-  if(_HardSerial->available() > 0) {
+  if(_HardSerial && _HardSerial->available() > 0) {
     // read until we get start byte 0xfc
     while(_HardSerial->available() > 0 && !foundStart) {
       header[0] = _HardSerial->read();
@@ -515,7 +525,7 @@ int HeatPump::readPacket() {
       }
     }
 
-    if(!foundStart) {
+    if(!foundStart || !_HardSerial) {
       return RCVD_PKT_FAIL;
     }
     
